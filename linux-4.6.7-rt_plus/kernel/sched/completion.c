@@ -61,11 +61,19 @@ static inline long __sched
 do_wait_for_common(struct completion *x,
 		   long (*action)(long), long timeout, int state)
 {
+	int again = 0;
+
 	if (!x->done) {
 		DECLARE_SWAITQUEUE(wait);
 
 		__prepare_to_swait(&x->wait, &wait);
 		do {
+			/* Check to see if we lost race for 'done' and are
+			* no longer in the wait list.
+			*/
+			if (unlikely(again) && list_empty(&wait.task_list))
+				__prepare_to_swait(&x->wait, &wait);
+
 			if (signal_pending_state(state, current)) {
 				timeout = -ERESTARTSYS;
 				break;
@@ -74,6 +82,7 @@ do_wait_for_common(struct completion *x,
 			raw_spin_unlock_irq(&x->wait.lock);
 			timeout = action(timeout);
 			raw_spin_lock_irq(&x->wait.lock);
+			again = 1;
 		} while (!x->done && timeout);
 		__finish_swait(&x->wait, &wait);
 		if (!x->done)
